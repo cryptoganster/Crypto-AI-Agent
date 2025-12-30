@@ -71,3 +71,8 @@ playwright/.local-browsers/
 *.bak
 *.swp
 .cache/
+
+# LLMs
+.opencode/
+.kiro/
+.specify/
