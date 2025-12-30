@@ -1,0 +1,132 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scraping-service"
+version = "1.0.0"
+description = "Microservicio de agregación de contenido RSS usando Clean Architecture y DDD"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "Trading Team", email = "team@tradingapp.com"},
+]
+keywords = ["rss", "scraping", "microservice", "clean-architecture", "ddd"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+]
+
+dependencies = [
+    "sqlalchemy>=2.0.23",
+    "alembic>=1.12.1", 
+    "psycopg2-binary>=2.9.9",
+    "asyncpg>=0.30.0",
+    "loguru>=0.7.2",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "feedparser>=6.0.10",
+    "requests>=2.31.0",
+    "langdetect>=1.0.9",
+    "aiohttp>=3.13.0",
+    "redis>=6.4.0",
+    "markdownify>=1.2.0",
+    "beautifulsoup4>=4.14.2",
+    "readability-lxml>=0.8.4.1",
+    "trafilatura>=2.0.0",
+    "apscheduler>=3.11.0",
+    "playwright>=1.55.0",
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "dependency-injector>=4.41.0",
+    "httpx>=0.25.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.3",
+    "pytest-asyncio>=0.21.1",
+    "pytest-cov>=4.1.0",
+    "pytest-mock>=3.12.0",
+    "hypothesis>=6.92.0",
+    "black>=23.11.0",
+    "isort>=5.12.0",
+    "flake8>=6.1.0",
+    "mypy>=1.7.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/tradingapp/scraping-service"
+Repository = "https://github.com/tradingapp/scraping-service.git"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 88
+target-version = ['py311']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+known_first_party = ["src"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = [
+    "feedparser.*",
+    "playwright.*",
+    "trafilatura.*",
+    "readability.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+]
+markers = [
+    "unit: Unit tests",
+    "integration: Integration tests", 
+    "slow: Slow running tests",
+    "external: Tests requiring external services",
+]

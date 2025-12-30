@@ -1,0 +1,1 @@
+"""Tests para RunScrapingPipeline command."""

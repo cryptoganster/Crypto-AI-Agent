@@ -1,0 +1,404 @@
+"""Integration tests para el flujo completo de pipelines.
+
+Este módulo verifica el flujo completo:
+Job → Mediator → Handler → Process Manager → Commands
+
+Simula la ejecución real de los jobs de scheduling con todos los
+componentes integrados.
+"""
+
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, Mock, patch
+from uuid import uuid4
+
+import pytest
+
+from src.app.commands.pipelines.run_fetch_pipeline.command import (
+    RunFetchPipelineCommand,
+)
+from src.app.commands.pipelines.run_processing_pipeline.command import (
+    RunProcessingPipelineCommand,
+)
+from src.app.commands.pipelines.run_scraping_pipeline.command import (
+    RunScrapingPipelineCommand,
+)
+from src.shared.config.app_config import AppConfig
+from src.article.container import ArticleContainer
+from src.scraping.container import ScrapingContainer as FetchingContainer
+from src.shared.container import SharedContainer
+from src.infra.scheduling.jobs.container_accessor import get_container, set_container
+
+
+@pytest.mark.integration
+class TestPipelineIntegration:
+    """Tests de integración para el flujo completo de pipelines."""
+
+    @pytest.fixture
+    def config(self):
+        """Crea configuración de test."""
+        return AppConfig()
+
+    @pytest.fixture
+    def infra(self, config):
+        """Crea SharedContainer."""
+        return SharedContainer(config)
+
+    @pytest.fixture
+    def article_container(self, infra):
+        """Crea ArticleContainer con handlers registrados."""
+        container = ArticleContainer(infra)
+        container.register_pipeline_handlers()
+        return container
+
+    @pytest.fixture
+    def fetching_container(self, infra):
+        """Crea FetchingContainer con handlers registrados."""
+        container = FetchingContainer(infra)
+        container.register_pipeline_handlers()
+        return container
+
+    @pytest.fixture
+    def mock_container(self, infra, article_container, fetching_container):
+        """Crea un mock container completo para los jobs."""
+        container = Mock()
+        container.infra = infra
+        container.articles = article_container
+        container.fetching = fetching_container
+        return container
+
+    @pytest.mark.asyncio
+    async def test_flujo_completo_scraping_job_a_process_manager(
+        self, mock_container, article_container
+    ):
+        """Debería ejecutar flujo completo: Job → Mediator → Handler → Process Manager."""
+        # Arrange - Configurar container global
+        set_container(mock_container)
+
+        # Mock query adapters para retornar datos de prueba
+        mock_article = Mock()
+        mock_article.id = uuid4()
+
+        scraping_pm = article_container.get_scraping_process_manager()
+        scraping_pm._query_adapter.get_without_content_scrapped = AsyncMock(
+            return_value=[mock_article]
+        )
+        scraping_pm._query_adapter.get_without_content_plaintext = AsyncMock(
+            return_value=[]
+        )
+        scraping_pm._query_adapter.get_without_content_markdown = AsyncMock(
+            return_value=[]
+        )
+
+        # Mock handler de scraping para evitar scraping real
+        from src.article.app.commands.scrape_article_content.command import (
+            ScrapeArticleContentCommand,
+        )
+
+        mock_scraping_result = Mock()
+        mock_scraping_result.success = True
+        mock_handler = AsyncMock()
+        mock_handler.handle = AsyncMock(return_value=mock_scraping_result)
+
+        original_handler = mock_container.infra.mediator._handler_registry.get(
+            ScrapeArticleContentCommand
+        )
+        mock_container.infra.mediator._handler_registry[ScrapeArticleContentCommand] = (
+            mock_handler
+        )
+
+        try:
+            # Act - Simular ejecución del job
+            from src.infra.scheduling.jobs.rss.scraping import execute_scraping_pipeline
+
+            result = await execute_scraping_pipeline(limit=10, force_rescrape=False)
+
+            # Assert
+            assert result["success"] is True
+            assert "duration_seconds" in result
+            assert "execution_time" in result
+            assert "stats" in result
+
+            # Verificar que se llamó al handler vía Mediator
+            mock_handler.handle.assert_called_once()
+
+        finally:
+            # Cleanup
+            if original_handler:
+                mock_container.infra.mediator._handler_registry[
+                    ScrapeArticleContentCommand
+                ] = original_handler
+
+    @pytest.mark.asyncio
+    async def test_flujo_completo_processing_job_a_process_manager(
+        self, mock_container, article_container
+    ):
+        """Debería ejecutar flujo completo del processing job."""
+        # Arrange
+        set_container(mock_container)
+
+        # Mock query adapters para retornar vacío (sin artículos para procesar)
+        processing_pm = article_container.get_processing_process_manager()
+        processing_pm._query_adapter.get_without_metrics = AsyncMock(return_value=[])
+        processing_pm._query_adapter.get_without_language = AsyncMock(return_value=[])
+        processing_pm._query_adapter.get_without_summary = AsyncMock(return_value=[])
+        processing_pm._query_adapter.get_without_keywords = AsyncMock(return_value=[])
+        processing_pm._query_adapter.get_without_crypto_coins = AsyncMock(
+            return_value=[]
+        )
+        processing_pm._query_adapter.get_without_quality = AsyncMock(return_value=[])
+
+        # Act
+        from src.infra.scheduling.jobs.rss.article_processing import (
+            execute_article_processing_pipeline,
+        )
+
+        result = await execute_article_processing_pipeline(limit=10)
+
+        # Assert
+        assert result["success"] is True
+        assert "duration_seconds" in result
+        assert "execution_time" in result
+        assert "stats" in result
+
+    @pytest.mark.asyncio
+    async def test_flujo_completo_fetch_job_a_process_manager(
+        self, mock_container, fetching_container
+    ):
+        """Debería ejecutar flujo completo del fetch job."""
+        # Arrange
+        set_container(mock_container)
+
+        # Mock query adapter para retornar vacío (sin sources activos)
+        fetch_pm = fetching_container.get_fetch_process_manager()
+        fetch_pm._query_adapter.get_active_sources = AsyncMock(return_value=[])
+
+        # Act
+        from src.infra.scheduling.jobs.rss.rss_fetch import execute_fetch_rss_job
+
+        result = await execute_fetch_rss_job()
+
+        # Assert
+        assert result["success"] is True
+        assert "duration_seconds" in result
+        assert "execution_time" in result
+        assert "stats" in result
+
+    @pytest.mark.asyncio
+    async def test_mediator_resuelve_handlers_correctamente_en_flujo_completo(
+        self, mock_container, article_container
+    ):
+        """Debería resolver handlers correctamente en el flujo completo."""
+        # Arrange
+        set_container(mock_container)
+
+        # Verificar que los handlers están registrados
+        mediator = mock_container.infra.mediator
+        assert RunScrapingPipelineCommand in mediator._handler_registry
+        assert RunProcessingPipelineCommand in mediator._handler_registry
+        assert RunFetchPipelineCommand in mediator._handler_registry
+
+        # Mock query adapters
+        scraping_pm = article_container.get_scraping_process_manager()
+        scraping_pm._query_adapter.get_without_content_scrapped = AsyncMock(
+            return_value=[]
+        )
+        scraping_pm._query_adapter.get_without_content_plaintext = AsyncMock(
+            return_value=[]
+        )
+        scraping_pm._query_adapter.get_without_content_markdown = AsyncMock(
+            return_value=[]
+        )
+
+        # Act - Enviar comando directamente vía Mediator
+        command = RunScrapingPipelineCommand(limit=10)
+        result = await mediator.send(command)
+
+        # Assert
+        assert result is not None
+        assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_job_maneja_errores_del_process_manager(
+        self, mock_container, article_container
+    ):
+        """Debería manejar errores del Process Manager correctamente."""
+        # Arrange
+        set_container(mock_container)
+
+        # Mock query adapter que lanza excepción
+        scraping_pm = article_container.get_scraping_process_manager()
+        scraping_pm._query_adapter.get_without_content_scrapped = AsyncMock(
+            side_effect=Exception("Database error")
+        )
+
+        # Act
+        from src.infra.scheduling.jobs.rss.scraping import execute_scraping_pipeline
+
+        result = await execute_scraping_pipeline(limit=10)
+
+        # Assert
+        assert result["success"] is False
+        assert "error" in result
+        assert "Database error" in result["error"]
+        assert "duration_seconds" in result
+
+    @pytest.mark.asyncio
+    async def test_job_obtiene_mediator_del_container_correctamente(
+        self, mock_container
+    ):
+        """Debería obtener el Mediator del container correctamente."""
+        # Arrange
+        set_container(mock_container)
+
+        # Act
+        container = get_container()
+        mediator = container.infra.mediator
+
+        # Assert
+        assert mediator is not None
+        assert mediator is mock_container.infra.mediator
+        assert len(mediator._handler_registry) > 0
+
+    @pytest.mark.asyncio
+    async def test_multiples_jobs_comparten_mismo_mediator(
+        self, mock_container, article_container, fetching_container
+    ):
+        """Debería compartir el mismo Mediator entre múltiples jobs."""
+        # Arrange
+        set_container(mock_container)
+
+        # Mock query adapters
+        scraping_pm = article_container.get_scraping_process_manager()
+        scraping_pm._query_adapter.get_without_content_scrapped = AsyncMock(
+            return_value=[]
+        )
+        scraping_pm._query_adapter.get_without_content_plaintext = AsyncMock(
+            return_value=[]
+        )
+        scraping_pm._query_adapter.get_without_content_markdown = AsyncMock(
+            return_value=[]
+        )
+
+        processing_pm = article_container.get_processing_process_manager()
+        processing_pm._query_adapter.get_without_metrics = AsyncMock(return_value=[])
+        processing_pm._query_adapter.get_without_language = AsyncMock(return_value=[])
+        processing_pm._query_adapter.get_without_summary = AsyncMock(return_value=[])
+        processing_pm._query_adapter.get_without_keywords = AsyncMock(return_value=[])
+        processing_pm._query_adapter.get_without_crypto_coins = AsyncMock(
+            return_value=[]
+        )
+        processing_pm._query_adapter.get_without_quality = AsyncMock(return_value=[])
+
+        # Act - Ejecutar múltiples jobs
+        from src.infra.scheduling.jobs.rss.article_processing import (
+            execute_article_processing_pipeline,
+        )
+        from src.infra.scheduling.jobs.rss.scraping import execute_scraping_pipeline
+
+        result1 = await execute_scraping_pipeline(limit=10)
+        result2 = await execute_article_processing_pipeline(limit=10)
+
+        # Assert
+        assert result1["success"] is True
+        assert result2["success"] is True
+
+        # Verificar que ambos usaron el mismo Mediator
+        container = get_container()
+        assert container.infra.mediator is mock_container.infra.mediator
+
+    @pytest.mark.asyncio
+    async def test_job_loggea_resultado_correctamente(
+        self, mock_container, article_container
+    ):
+        """Debería loggear el resultado del job correctamente."""
+        # Arrange
+        set_container(mock_container)
+
+        # Mock query adapters
+        scraping_pm = article_container.get_scraping_process_manager()
+        scraping_pm._query_adapter.get_without_content_scrapped = AsyncMock(
+            return_value=[]
+        )
+        scraping_pm._query_adapter.get_without_content_plaintext = AsyncMock(
+            return_value=[]
+        )
+        scraping_pm._query_adapter.get_without_content_markdown = AsyncMock(
+            return_value=[]
+        )
+
+        # Act
+        from src.infra.scheduling.jobs.rss.scraping import execute_scraping_pipeline
+
+        result = await execute_scraping_pipeline(limit=10)
+
+        # Assert - Verificar estructura del resultado
+        assert "success" in result
+        assert "duration_seconds" in result
+        assert "execution_time" in result
+        assert "stats" in result
+
+        # Verificar que el resultado contiene estadísticas
+        stats = result["stats"]
+        assert "scraping" in stats
+        assert "plaintext" in stats
+        assert "markdown" in stats
+
+    @pytest.mark.asyncio
+    async def test_pipeline_completo_con_articulos_reales_mock(
+        self, mock_container, article_container
+    ):
+        """Debería procesar artículos a través del pipeline completo."""
+        # Arrange
+        set_container(mock_container)
+
+        # Crear artículos mock
+        mock_articles = [Mock(id=uuid4()) for _ in range(3)]
+
+        scraping_pm = article_container.get_scraping_process_manager()
+        scraping_pm._query_adapter.get_without_content_scrapped = AsyncMock(
+            return_value=mock_articles
+        )
+        scraping_pm._query_adapter.get_without_content_plaintext = AsyncMock(
+            return_value=[]
+        )
+        scraping_pm._query_adapter.get_without_content_markdown = AsyncMock(
+            return_value=[]
+        )
+
+        # Mock handler de scraping
+        from src.article.app.commands.scrape_article_content.command import (
+            ScrapeArticleContentCommand,
+        )
+
+        mock_scraping_result = Mock()
+        mock_scraping_result.success = True
+        mock_handler = AsyncMock()
+        mock_handler.handle = AsyncMock(return_value=mock_scraping_result)
+
+        original_handler = mock_container.infra.mediator._handler_registry.get(
+            ScrapeArticleContentCommand
+        )
+        mock_container.infra.mediator._handler_registry[ScrapeArticleContentCommand] = (
+            mock_handler
+        )
+
+        try:
+            # Act
+            from src.infra.scheduling.jobs.rss.scraping import execute_scraping_pipeline
+
+            result = await execute_scraping_pipeline(limit=10)
+
+            # Assert
+            assert result["success"] is True
+            assert result["stats"]["scraping"]["total"] == 3
+            assert result["stats"]["scraping"]["success"] == 3
+            assert result["stats"]["scraping"]["failed"] == 0
+
+            # Verificar que se procesaron todos los artículos
+            assert mock_handler.handle.call_count == 3
+
+        finally:
+            if original_handler:
+                mock_container.infra.mediator._handler_registry[
+                    ScrapeArticleContentCommand
+                ] = original_handler

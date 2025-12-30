@@ -1,0 +1,60 @@
+{
+  "mcpServers": {
+    "chrome-devtools": {
+      "args": [
+        "-y",
+        "chrome-devtools-mcp@latest"
+      ],
+      "command": "npx",
+      "disabled": false,
+      "env": {}
+    },
+    "git": {
+      "args": [
+        "mcp-server-git"
+      ],
+      "command": "uvx",
+      "disabled": true,
+      "disabledTools": [
+        "git_status"
+      ],
+      "env": {}
+    },
+    "mcp-playwright": {
+      "args": [
+        "-y",
+        "@playwright/mcp@latest"
+      ],
+      "command": "npx",
+      "disabled": false,
+      "env": {}
+    },
+    "puppeteer": {
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-puppeteer"
+      ],
+      "command": "npx",
+      "disabled": true,
+      "env": {}
+    },
+    "supabase-mcp-server": {
+      "args": [
+        "-y",
+        "@supabase/mcp-server-supabase@latest",
+        "--access-token",
+        "sbp_8ace9c73cc4c2de255351e7cd63f03202e99e604"
+      ],
+      "command": "npx",
+      "disabled": true,
+      "env": {}
+    },
+    "Docs by LangChain": {
+      "name": "Docs by LangChain",
+      "url": "https://docs.langchain.com/mcp",
+      "headers": {}
+    }
+  }
+}
+
+
