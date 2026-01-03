@@ -1,0 +1,46 @@
+# CODEOWNERS
+# Este archivo define quién debe revisar cambios en diferentes partes del código
+# Más info: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owners para todo el repositorio
+* @tradingapp/backend-team
+
+# Domain Layer - Requiere revisión de arquitectos
+/src/domain/ @tradingapp/architects @tradingapp/backend-team
+/src/*/domain/ @tradingapp/architects @tradingapp/backend-team
+
+# Application Layer - Handlers y casos de uso
+/src/*/app/ @tradingapp/backend-team
+
+# Infrastructure - Requiere revisión de DevOps
+/src/infra/ @tradingapp/backend-team @tradingapp/devops
+/.github/ @tradingapp/devops
+/Dockerfile @tradingapp/devops
+/docker-compose.yml @tradingapp/devops
+
+# Database - Requiere revisión de DBA
+/alembic/ @tradingapp/backend-team @tradingapp/dba
+/src/infra/persistence/ @tradingapp/backend-team @tradingapp/dba
+
+# API/Presentation - Requiere revisión de API team
+/src/presentation/ @tradingapp/backend-team @tradingapp/api-team
+
+# Tests - Todos pueden revisar
+/tests/ @tradingapp/backend-team
+
+# Documentation - Requiere revisión de tech writers
+/docs/ @tradingapp/backend-team @tradingapp/tech-writers
+/README.md @tradingapp/backend-team @tradingapp/tech-writers
+/.kiro/steering/ @tradingapp/architects @tradingapp/tech-writers
+
+# Configuration files
+/pyproject.toml @tradingapp/backend-team @tradingapp/devops
+/requirements.txt @tradingapp/backend-team @tradingapp/devops
+/.env.example @tradingapp/backend-team @tradingapp/devops
+
+# CI/CD Workflows
+/.github/workflows/ @tradingapp/devops @tradingapp/backend-team
+
+# Security-sensitive files
+/.github/CODEOWNERS @tradingapp/architects
+/.github/RULESET_MASTER.md @tradingapp/architects

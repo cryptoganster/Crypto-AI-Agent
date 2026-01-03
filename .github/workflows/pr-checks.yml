@@ -1,0 +1,230 @@
+name: PR Checks
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+jobs:
+  # Job 1: PR Title Check
+  pr-title:
+    name: Check PR Title
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    
+    steps:
+      - name: Check PR title format
+        uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            docs
+            style
+            refactor
+            perf
+            test
+            build
+            ci
+            chore
+            revert
+          requireScope: false
+          subjectPattern: ^[A-Z].+$
+          subjectPatternError: |
+            El título debe comenzar con mayúscula.
+            Ejemplo: "feat: Agregar validación de artículos"
+
+  # Job 2: PR Size Check
+  pr-size:
+    name: Check PR Size
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    
+    steps:
+      - name: Check PR size
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const additions = pr.additions;
+            const deletions = pr.deletions;
+            const changes = additions + deletions;
+            
+            let label = '';
+            let message = '';
+            
+            if (changes < 100) {
+              label = 'size/XS';
+              message = '✅ PR pequeño - fácil de revisar';
+            } else if (changes < 300) {
+              label = 'size/S';
+              message = '✅ PR pequeño/mediano';
+            } else if (changes < 500) {
+              label = 'size/M';
+              message = '⚠️ PR mediano - considera dividir';
+            } else if (changes < 1000) {
+              label = 'size/L';
+              message = '⚠️ PR grande - difícil de revisar';
+            } else {
+              label = 'size/XL';
+              message = '❌ PR muy grande - por favor divide en PRs más pequeños';
+            }
+            
+            // Add label
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              labels: [label]
+            });
+            
+            // Add comment
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              body: `${message}\n\n📊 Cambios: ${changes} líneas (+${additions}/-${deletions})`
+            });
+
+  # Job 3: Check for Breaking Changes
+  breaking-changes:
+    name: Check Breaking Changes
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Check for breaking changes in commit messages
+        run: |
+          BREAKING=$(git log origin/${{ github.base_ref }}..HEAD --grep="BREAKING CHANGE" --oneline)
+          if [ -n "$BREAKING" ]; then
+            echo "⚠️ Breaking changes detected:"
+            echo "$BREAKING"
+            echo "breaking_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "✅ No breaking changes detected"
+            echo "breaking_changes=false" >> $GITHUB_OUTPUT
+          fi
+        id: check
+      
+      - name: Add breaking change label
+        if: steps.check.outputs.breaking_changes == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              labels: ['breaking-change']
+            });
+
+  # Job 4: Check Documentation
+  documentation:
+    name: Check Documentation
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Check if docs need update
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: files } = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number
+            });
+            
+            const hasCodeChanges = files.some(f => 
+              f.filename.startsWith('src/') && 
+              (f.filename.endsWith('.py'))
+            );
+            
+            const hasDocChanges = files.some(f => 
+              f.filename.includes('README') || 
+              f.filename.includes('docs/') ||
+              f.filename.includes('.kiro/steering/')
+            );
+            
+            if (hasCodeChanges && !hasDocChanges) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                body: '📝 Este PR modifica código pero no actualiza documentación. ¿Es necesario actualizar README o docs?'
+              });
+              
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                labels: ['needs-docs']
+              });
+            }
+
+  # Job 5: Check Test Coverage
+  test-coverage:
+    name: Check Test Coverage
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      
+      - name: Check if tests exist for new code
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: files } = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number
+            });
+            
+            const newPyFiles = files.filter(f => 
+              f.status === 'added' && 
+              f.filename.startsWith('src/') && 
+              f.filename.endsWith('.py')
+            );
+            
+            const newTestFiles = files.filter(f => 
+              f.status === 'added' && 
+              f.filename.startsWith('tests/') && 
+              f.filename.endsWith('.py')
+            );
+            
+            if (newPyFiles.length > 0 && newTestFiles.length === 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                body: '⚠️ Este PR agrega código nuevo pero no incluye tests. Por favor agrega tests apropiados.'
+              });
+              
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                labels: ['needs-tests']
+              });
+            }
